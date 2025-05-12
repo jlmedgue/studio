@@ -131,12 +131,13 @@ export default function TaskTrackerPage() {
         setTasks(parsedTasks);
       } else {
         // Add some dummy data if localStorage is empty
-        const dummyTasks: Task[] = Array.from({ length: 5 }, (_, i) => ({
+        // Increased count from 5 to 35
+        const dummyTasks: Task[] = Array.from({ length: 35 }, (_, i) => ({
           id: generateId(),
           date: new Date(Date.now() - i * 24 * 60 * 60 * 1000), // Decreasing dates
           description: `Sample Task ${i + 1} description about something important.`,
-          link: `https://example.com/task/${i + 1}`,
-          status: i % 2 === 0 ? 'Completed' : 'Pending',
+          link: i % 5 === 0 ? `https://example.com/task/${i + 1}` : undefined, // Add links sometimes
+          status: i % 3 === 0 ? 'Completed' : 'Pending', // Vary status more
         }));
         setTasks(dummyTasks);
         localStorage.setItem("tasks", JSON.stringify(dummyTasks));
@@ -145,8 +146,14 @@ export default function TaskTrackerPage() {
       console.error("Error loading tasks from localStorage:", error);
       // Initialize with empty or default tasks if error occurs
       setTasks([]);
+       toast({
+         title: "Error Loading Tasks",
+         description: "Could not load tasks from local storage.",
+         variant: "destructive",
+       });
     }
-   }, []);
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []); // Added dependency array with toast to satisfy exhaustive-deps lint rule, though it only runs once
 
 
   // Save tasks to localStorage whenever they change
@@ -157,7 +164,7 @@ export default function TaskTrackerPage() {
         } catch (error) {
             console.error("Error saving tasks to localStorage:", error);
             toast({
-              title: "Error",
+              title: "Error Saving Tasks",
               description: "Could not save tasks locally.",
               variant: "destructive",
             });
@@ -172,7 +179,10 @@ export default function TaskTrackerPage() {
       id: generateId(),
       link: values.link || undefined, // Ensure empty string becomes undefined
     };
+    // Add new tasks to the beginning, and reset pagination and sorting to show it
     setTasks((prevTasks) => [newTask, ...prevTasks]);
+    setCurrentPage(1); // Go to the first page to see the new task
+    setSortConfig({ key: 'date', direction: 'descending' }); // Reset sort
     form.reset({ description: "", link: "", status: "Pending", date: new Date() }); // Reset form to defaults
      toast({ title: "Success", description: "Task added successfully." });
   };
@@ -193,7 +203,17 @@ export default function TaskTrackerPage() {
   };
 
   const handleDeleteTask = (id: string) => {
-    setTasks((prevTasks) => prevTasks.filter((task) => task.id !== id));
+    setTasks((prevTasks) => {
+       const newTasks = prevTasks.filter((task) => task.id !== id);
+       // After deleting, check if the current page becomes empty and adjust
+       const newTotalPages = Math.ceil(newTasks.length / TASKS_PER_PAGE);
+       if (currentPage > newTotalPages && newTotalPages > 0) {
+         setCurrentPage(newTotalPages);
+       } else if (newTasks.length === 0) {
+            setCurrentPage(1); // Reset to page 1 if no tasks left
+       }
+       return newTasks;
+     });
      toast({ title: "Success", description: "Task deleted successfully." });
   };
 
@@ -214,33 +234,28 @@ export default function TaskTrackerPage() {
     let direction: 'ascending' | 'descending' = 'ascending';
     if (sortConfig.key === key && sortConfig.direction === 'ascending') {
       direction = 'descending';
+    } else if (sortConfig.key === key && sortConfig.direction === 'descending') {
+        // Optional: third click resets sort or reverses again, here just reverses
+        direction = 'ascending';
     }
     setSortConfig({ key, direction });
+    setCurrentPage(1); // Reset to first page on sort change
   };
 
   // Filtering and Sorting Logic
   const filteredTasks = React.useMemo(() => {
-    let filtered = tasks;
-    if (searchTerm) {
-       const lowerCaseSearchTerm = searchTerm.toLowerCase();
-       filtered = tasks.filter(task =>
-         task.description.toLowerCase().includes(lowerCaseSearchTerm) ||
-         format(task.date, 'yyyy-MM-dd').includes(lowerCaseSearchTerm) ||
-         format(task.date, 'PP').toLowerCase().includes(lowerCaseSearchTerm) // Search formatted date too
-       );
-    }
+    let tempTasks = [...tasks]; // Create a copy to sort
 
+    // Apply sorting
     if (sortConfig.key) {
-      filtered.sort((a, b) => {
+      tempTasks.sort((a, b) => {
         const aValue = a[sortConfig.key!];
         const bValue = b[sortConfig.key!];
 
-        if (aValue === undefined || bValue === undefined) {
-            // Handle undefined values, perhaps placing them at the end
-            if (aValue === undefined && bValue === undefined) return 0;
-            if (aValue === undefined) return sortConfig.direction === 'ascending' ? 1 : -1;
-            if (bValue === undefined) return sortConfig.direction === 'ascending' ? -1 : 1;
-        }
+        // Handle undefined values - place them at the end when ascending, beginning when descending
+        if (aValue === undefined && bValue === undefined) return 0;
+        if (aValue === undefined) return sortConfig.direction === 'ascending' ? 1 : -1;
+        if (bValue === undefined) return sortConfig.direction === 'ascending' ? -1 : 1;
 
         let comparison = 0;
         if (typeof aValue === 'string' && typeof bValue === 'string') {
@@ -249,36 +264,65 @@ export default function TaskTrackerPage() {
           comparison = aValue.getTime() - bValue.getTime();
         } else if (typeof aValue === 'number' && typeof bValue === 'number') {
             comparison = aValue - bValue;
+        } else if (typeof aValue === 'boolean' && typeof bValue === 'boolean') {
+            comparison = aValue === bValue ? 0 : aValue ? -1 : 1; // Example: true comes first
         }
-         // Handle other types if necessary, default to no change
+        // Handle other types if necessary, default to no change
 
         return sortConfig.direction === 'ascending' ? comparison : -comparison;
       });
     }
 
-    return filtered;
+    // Apply search filter after sorting
+    if (searchTerm) {
+       const lowerCaseSearchTerm = searchTerm.toLowerCase();
+       tempTasks = tempTasks.filter(task =>
+         task.description.toLowerCase().includes(lowerCaseSearchTerm) ||
+         format(task.date, 'yyyy-MM-dd').includes(lowerCaseSearchTerm) ||
+         format(task.date, 'PPP').toLowerCase().includes(lowerCaseSearchTerm) || // Search long formatted date
+         task.status.toLowerCase().includes(lowerCaseSearchTerm) // Search status
+       );
+    }
+
+    return tempTasks;
   }, [tasks, searchTerm, sortConfig]);
 
 
   // Pagination Logic
   const totalPages = Math.ceil(filteredTasks.length / TASKS_PER_PAGE);
   const paginatedTasks = React.useMemo(() => {
-    const startIndex = (currentPage - 1) * TASKS_PER_PAGE;
+    // Ensure currentPage is valid
+    const validCurrentPage = Math.max(1, Math.min(currentPage, totalPages || 1));
+    if (currentPage !== validCurrentPage) {
+        // This should ideally not happen if state updates correctly, but as a safeguard
+        setCurrentPage(validCurrentPage);
+    }
+    const startIndex = (validCurrentPage - 1) * TASKS_PER_PAGE;
     const endIndex = startIndex + TASKS_PER_PAGE;
     return filteredTasks.slice(startIndex, endIndex);
-  }, [filteredTasks, currentPage]);
+  }, [filteredTasks, currentPage, totalPages]);
 
   const goToPage = (page: number) => {
-    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+    setCurrentPage(Math.max(1, Math.min(page, totalPages || 1)));
   };
+
+   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+     setSearchTerm(event.target.value);
+     setCurrentPage(1); // Reset to first page on new search
+   };
+
+   const clearSearch = () => {
+        setSearchTerm("");
+        setCurrentPage(1); // Reset to first page
+   };
 
   const onSubmit = editingTask ? handleUpdateTask : handleAddTask;
 
   // Render loading state or placeholder if not client
   if (!isClient) {
       return (
-          <div className="flex items-center justify-center min-h-screen">
-              <p>Loading Task Tracker...</p>
+          <div className="flex items-center justify-center min-h-screen p-4 text-center">
+              <p className="text-muted-foreground">Loading Task Tracker...</p>
           </div>
       );
   }
@@ -298,7 +342,7 @@ export default function TaskTrackerPage() {
         </h2>
         <Form {...form}>
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-start"> {/* items-start for alignment */}
               {/* Date Field */}
               <FormField
                 control={form.control}
@@ -312,7 +356,7 @@ export default function TaskTrackerPage() {
                           <Button
                             variant={"outline"}
                             className={cn(
-                              "pl-3 text-left font-normal",
+                              "w-full justify-start text-left font-normal", // Ensure full width
                               !field.value && "text-muted-foreground"
                             )}
                           >
@@ -329,10 +373,10 @@ export default function TaskTrackerPage() {
                         <Calendar
                           mode="single"
                           selected={field.value}
-                          onSelect={field.onChange}
-                          disabled={(date) =>
-                            date > new Date() || date < new Date("1900-01-01")
-                          }
+                          onSelect={(date) => field.onChange(date ?? new Date())} // Ensure date is always set
+                          // disabled={(date) =>
+                          //   date > new Date() || date < new Date("1900-01-01")
+                          // }
                           initialFocus
                         />
                       </PopoverContent>
@@ -347,7 +391,7 @@ export default function TaskTrackerPage() {
                 control={form.control}
                 name="description"
                 render={({ field }) => (
-                  <FormItem className="lg:col-span-2">
+                  <FormItem className="lg:col-span-2"> {/* Span 2 cols on large screens */}
                     <FormLabel>Description</FormLabel>
                     <FormControl>
                       <Input placeholder="Describe the task..." {...field} />
@@ -404,7 +448,7 @@ export default function TaskTrackerPage() {
                  </Button>
                )}
               <Button type="submit" className="bg-accent hover:bg-accent/90 text-accent-foreground">
-                <Plus className="mr-2 h-4 w-4" />
+                {editingTask ? <Pencil className="mr-2 h-4 w-4" /> : <Plus className="mr-2 h-4 w-4" />}
                 {editingTask ? "Update Task" : "Add Task"}
               </Button>
             </div>
@@ -415,20 +459,29 @@ export default function TaskTrackerPage() {
         {/* Search and Export */}
         <div className="flex flex-col md:flex-row justify-between items-center mb-4 gap-4">
             <div className="flex items-center space-x-2 w-full md:w-auto">
-                <Input
-                    type="text"
-                    placeholder="Search by name or date (YYYY-MM-DD)..."
-                    value={searchTerm}
-                    onChange={(e) => {
-                        setSearchTerm(e.target.value);
-                        setCurrentPage(1); // Reset to first page on search
-                    }}
-                    className="max-w-sm"
-                />
-                 <Button variant="outline" size="icon" onClick={() => setSearchTerm("")} disabled={!searchTerm}>
-                     <X className="h-4 w-4" />
-                     <span className="sr-only">Clear Search</span>
-                 </Button>
+                <Label htmlFor="search-tasks" className="sr-only">Search Tasks</Label>
+                 <div className="relative w-full max-w-sm">
+                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                          id="search-tasks"
+                          type="text"
+                          placeholder="Search description, date, status..."
+                          value={searchTerm}
+                          onChange={handleSearchChange}
+                          className="pl-9" // Padding left for icon
+                      />
+                      {searchTerm && (
+                         <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7"
+                            onClick={clearSearch}
+                            aria-label="Clear search"
+                          >
+                            <X className="h-4 w-4" />
+                          </Button>
+                      )}
+                </div>
             </div>
              {/* Export Button */}
              <Dialog>
@@ -440,21 +493,21 @@ export default function TaskTrackerPage() {
                 </DialogTrigger>
                 <DialogContent>
                     <DialogHeader>
-                        <DialogTitle>Export Tasks to Excel</DialogTitle>
+                        <DialogTitle>Export Tasks</DialogTitle>
                         <DialogDescription>
-                           Select a date range to export tasks. (Excel export functionality not yet implemented).
+                           This feature allows exporting tasks to formats like CSV or Excel. (Functionality not yet implemented).
                         </DialogDescription>
                     </DialogHeader>
                     <div className="grid gap-4 py-4">
-                         {/* Placeholder for Date Range Pickers */}
-                         <p className="text-sm text-muted-foreground">Date range selection will be here.</p>
+                         {/* Placeholder for Export Options */}
+                         <p className="text-sm text-muted-foreground">Export format and date range options will appear here.</p>
                      </div>
                     <DialogFooter>
                         <DialogClose asChild>
                              <Button type="button" variant="outline">Cancel</Button>
                          </DialogClose>
                         {/* Placeholder for actual Export Button */}
-                         <Button type="button" disabled>Export</Button>
+                         <Button type="button" disabled>Export Now</Button>
                      </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -465,24 +518,27 @@ export default function TaskTrackerPage() {
          <Table>
            <TableHeader>
              <TableRow>
-               <TableHead className="w-[150px] cursor-pointer hover:bg-muted/50" onClick={() => requestSort('date')}>
-                 <div className="flex items-center">
+               <TableHead className="w-[150px]">
+                 <Button variant="ghost" onClick={() => requestSort('date')} className="px-0 hover:bg-transparent">
                     Date
-                    {sortConfig.key === 'date' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                 </div>
+                    {sortConfig.key === 'date' && <ArrowUpDown className={cn("ml-2 h-4 w-4", sortConfig.direction === 'ascending' ? '' : 'rotate-180')} />}
+                    <span className="sr-only">Sort by date</span>
+                 </Button>
                </TableHead>
-               <TableHead className="cursor-pointer hover:bg-muted/50" onClick={() => requestSort('description')}>
-                 <div className="flex items-center">
+               <TableHead>
+                <Button variant="ghost" onClick={() => requestSort('description')} className="px-0 hover:bg-transparent">
                      Description
-                     {sortConfig.key === 'description' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                 </div>
+                     {sortConfig.key === 'description' && <ArrowUpDown className={cn("ml-2 h-4 w-4", sortConfig.direction === 'ascending' ? '' : 'rotate-180')} />}
+                     <span className="sr-only">Sort by description</span>
+                 </Button>
                </TableHead>
-               <TableHead className="w-[100px]">Link</TableHead>
-               <TableHead className="w-[120px] cursor-pointer hover:bg-muted/50" onClick={() => requestSort('status')}>
-                 <div className="flex items-center">
+               <TableHead className="w-[100px] text-center">Link</TableHead>
+               <TableHead className="w-[120px]">
+                  <Button variant="ghost" onClick={() => requestSort('status')} className="px-0 hover:bg-transparent">
                     Status
-                    {sortConfig.key === 'status' && <ArrowUpDown className="ml-2 h-4 w-4" />}
-                 </div>
+                    {sortConfig.key === 'status' && <ArrowUpDown className={cn("ml-2 h-4 w-4", sortConfig.direction === 'ascending' ? '' : 'rotate-180')} />}
+                    <span className="sr-only">Sort by status</span>
+                 </Button>
                </TableHead>
                <TableHead className="w-[130px] text-right">Actions</TableHead>
              </TableRow>
@@ -490,20 +546,25 @@ export default function TaskTrackerPage() {
            <TableBody>
              {paginatedTasks.length > 0 ? (
                paginatedTasks.map((task) => (
-                 <TableRow key={task.id}>
+                 <TableRow key={task.id} data-state={editingTask?.id === task.id ? 'selected' : undefined}>
                    <TableCell>{format(task.date, "PPP")}</TableCell>
-                   <TableCell className="font-medium max-w-xs truncate">{task.description}</TableCell>
-                   <TableCell>
+                   <TableCell className="font-medium max-w-sm md:max-w-md lg:max-w-lg xl:max-w-xl truncate" title={task.description}>
+                     {task.description}
+                   </TableCell>
+                   <TableCell className="text-center">
                      {task.link ? (
-                       <a
-                         href={task.link}
-                         target="_blank"
-                         rel="noopener noreferrer"
-                         className="text-accent hover:underline"
-                         title={task.link}
-                       >
-                          <LinkIcon className="h-4 w-4 inline"/>
-                       </a>
+                       <Button variant="ghost" size="icon" asChild>
+                           <a
+                             href={task.link}
+                             target="_blank"
+                             rel="noopener noreferrer"
+                             className="text-accent hover:text-accent/80"
+                             title={`Open link: ${task.link}`}
+                             aria-label={`Open link for task ${task.description}`}
+                           >
+                              <LinkIcon className="h-4 w-4"/>
+                           </a>
+                       </Button>
                      ) : (
                        <span className="text-muted-foreground">-</span>
                      )}
@@ -512,33 +573,35 @@ export default function TaskTrackerPage() {
                      <Badge
                        variant={task.status === "Completed" ? "secondary" : "outline"}
                        className={cn(
-                           task.status === "Completed" ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" : "border-yellow-400 text-yellow-600 dark:border-yellow-600 dark:text-yellow-400"
+                           "capitalize", // Ensure consistent capitalization
+                           task.status === "Completed" ? "bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 border border-green-300 dark:border-green-700"
+                                                       : "border-yellow-400 text-yellow-700 dark:border-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30"
                            )}
                       >
                        {task.status}
                      </Badge>
                    </TableCell>
                    <TableCell className="text-right space-x-1">
-                     <Button variant="ghost" size="icon" onClick={() => startEditing(task)} aria-label="Modify task">
+                     <Button variant="ghost" size="icon" onClick={() => startEditing(task)} aria-label={`Modify task ${task.description}`}>
                        <Pencil className="h-4 w-4 text-blue-600" />
                      </Button>
                      <AlertDialog>
                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" aria-label="Delete task">
+                          <Button variant="ghost" size="icon" aria-label={`Delete task ${task.description}`}>
                             <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>
                        </AlertDialogTrigger>
                        <AlertDialogContent>
                          <AlertDialogHeader>
-                           <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                           <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                            <AlertDialogDescription>
-                             This action cannot be undone. This will permanently delete the task: "{task.description}".
+                             This action cannot be undone. This will permanently delete the task: <strong className="break-all">"{task.description}"</strong>.
                            </AlertDialogDescription>
                          </AlertDialogHeader>
                          <AlertDialogFooter>
                            <AlertDialogCancel>Cancel</AlertDialogCancel>
                            <AlertDialogAction onClick={() => handleDeleteTask(task.id)} className="bg-destructive hover:bg-destructive/90">
-                             Delete
+                             Delete Task
                            </AlertDialogAction>
                          </AlertDialogFooter>
                        </AlertDialogContent>
@@ -549,7 +612,7 @@ export default function TaskTrackerPage() {
              ) : (
                <TableRow>
                  <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
-                   {searchTerm ? "No tasks match your search." : "No tasks yet. Add one above!"}
+                   {searchTerm ? "No tasks match your search criteria." : "No tasks added yet. Use the form above!"}
                  </TableCell>
                </TableRow>
              )}
@@ -561,7 +624,7 @@ export default function TaskTrackerPage() {
       {totalPages > 1 && (
          <div className="flex items-center justify-between mt-6 p-4 bg-card rounded-lg border shadow-sm">
              <span className="text-sm text-muted-foreground">
-                 Page {currentPage} of {totalPages} ({filteredTasks.length} tasks)
+                 Page {currentPage} of {totalPages} ({filteredTasks.length} task{filteredTasks.length === 1 ? '' : 's'})
              </span>
             <div className="flex items-center space-x-1">
                 <Button
@@ -582,8 +645,8 @@ export default function TaskTrackerPage() {
                  >
                     <ChevronLeft className="h-4 w-4" />
                  </Button>
-                 {/* Optional: Page number indicators */}
-                 {/* We can add simple page number display or more complex indicators later */}
+                 {/* Page number input - Optional, can be complex */}
+                 {/* <span className="px-2 text-sm">Page {currentPage}</span> */}
                  <Button
                     variant="outline"
                     size="icon"
