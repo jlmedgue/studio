@@ -14,7 +14,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning> {/* suppressHydrationWarning for theme toggle */}
+    <html lang="en" suppressHydrationWarning> {/* suppressHydrationWarning is necessary for theme toggle */}
       <body className={`${GeistSans.variable} font-sans antialiased`}>
         <main>{children}</main>
         <Toaster /> {/* Add Toaster component here */}
